@@ -23,10 +23,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # The Actions token cannot read this account's pull requests in other repositories; a fine-grained personal
+      # token with public read access (secret PROFILE_TOKEN) can. Without it the stats card is left unchanged.
       - name: Build SVGs
         run: node scripts/build.mjs
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PROFILE_TOKEN || secrets.GITHUB_TOKEN }}
       - name: Commit changes
         run: |
           if git diff --quiet -- assets; then echo "assets unchanged"; exit 0; fi
