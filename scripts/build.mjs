@@ -206,9 +206,10 @@ text{font-family:${FAMILY};}
 }
 
 // ---------------------------------------------------------------- stats
-// Counts come from the user's pull requests in public repositories (search API), not from the contribution
-// calendar: GitHub's calendar reads 0 for this account although its pull requests are public. Private repositories
-// are left out so the output is the same whatever token runs the build.
+// Counts come from the user's pull requests in public repositories (User.pullRequests), not from the contribution
+// calendar or the search API: both read 0 for this account although its pull requests are public, and the search
+// API only covers the workflow's own repository under the Actions token. Private repositories are left out so the
+// output is the same whatever token runs the build.
 async function gql(token, query, variables) {
   const res = await fetch('https://api.github.com/graphql', {
     method: 'POST',
@@ -223,13 +224,14 @@ async function gql(token, query, variables) {
 async function fetchStats(token) {
   const prs = [];
   for (let after = null; ;) {
-    const d = await gql(token, `query($q:String!, $after:String){ search(query:$q, type:ISSUE, first:100, after:$after){
+    const d = await gql(token, `query($login:String!, $after:String){ user(login:$login){ pullRequests(first:100, after:$after){
       pageInfo{ hasNextPage endCursor }
-      nodes{ ... on PullRequest { createdAt merged repository{ nameWithOwner isPrivate owner{ login } } } } } }`,
-    { q: `author:${LOGIN} is:pr`, after });
-    prs.push(...d.search.nodes.filter((n) => n.repository && !n.repository.isPrivate));
-    if (!d.search.pageInfo.hasNextPage) break;
-    after = d.search.pageInfo.endCursor;
+      nodes{ createdAt merged repository{ nameWithOwner isPrivate owner{ login } } } } } }`,
+    { login: LOGIN, after });
+    const page = d.user.pullRequests;
+    prs.push(...page.nodes.filter((n) => n.repository && !n.repository.isPrivate));
+    if (!page.pageInfo.hasNextPage) break;
+    after = page.pageInfo.endCursor;
   }
   const u = (await gql(token, `query($login:String!){ user(login:$login){
     repositories(ownerAffiliations:OWNER, privacy:PUBLIC, first:100){ totalCount nodes{ isFork } } } }`, { login: LOGIN })).user;
@@ -340,6 +342,15 @@ async function main() {
   const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   if (!token) { console.log('hero written; no GITHUB_TOKEN, stats kept as they are'); return; }
   const s = await fetchStats(token);
+  const prevFile = path.join(ASSETS, 'stats.json');
+  const prev = fs.existsSync(prevFile) ? JSON.parse(fs.readFileSync(prevFile, 'utf8')) : null;
+  if (prev && s.prs < prev.prs / 2) {
+    console.warn(`::warning::fetched ${s.prs} pull requests, previous build had ${prev.prs}; stats kept as they are`);
+    return;
+  }
+  const { weeks, ...summary } = s;
+  fs.writeFileSync(prevFile, `${JSON.stringify(summary, null, 2)}
+`);
   for (const t of Object.values(THEMES)) fs.writeFileSync(path.join(ASSETS, `stats-${t.name}.svg`), stats(t, s));
   console.log(`hero + stats written (${s.prs} PRs, ${s.merged} merged, ${s.contributedTo} repos, ${s.activeDays} active days, updated ${s.updated})`);
 }
